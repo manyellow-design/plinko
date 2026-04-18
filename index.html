@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>20-Row Plinko</title>
+    <title>Turbo Plinko</title>
     <style>
         body {
             background-color: #0f1923;
@@ -48,67 +48,104 @@
             justify-content: space-between;
             padding: 0 20px;
             box-sizing: border-box;
+            flex-wrap: wrap;
         }
 
         .balance-box {
             font-size: 24px;
             font-weight: bold;
             color: #29ff5e;
+            min-width: 200px;
         }
 
         .bet-controls {
             display: flex;
-            gap: 10px;
-            align-items: center;
+            gap: 12px;
+            align-items: flex-end;
+            background: #233446;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #cbd5e1;
+            font-weight: bold;
         }
 
         input[type="number"] {
             background: #0f1923;
             border: 2px solid #334155;
             color: white;
-            padding: 10px;
+            padding: 8px;
             border-radius: 6px;
             font-size: 16px;
-            width: 100px;
+            width: 70px;
             outline: none;
+            text-align: center;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
         }
 
         button {
-            background-color: #ff4655;
-            color: white;
             border: none;
-            padding: 12px 24px;
-            font-size: 16px;
+            padding: 12px 20px;
+            font-size: 14px;
             font-weight: bold;
             border-radius: 6px;
             cursor: pointer;
             text-transform: uppercase;
-            transition: background-color 0.2s, transform 0.1s;
+            transition: all 0.2s;
+            color: white;
         }
 
-        button:hover {
-            background-color: #ff5c6a;
-        }
+        .btn-drop { background-color: #ff4655; }
+        .btn-drop:hover { background-color: #ff5c6a; }
 
-        button:active {
-            transform: scale(0.95);
+        .btn-turbo { 
+            background-color: #facc15; 
+            color: #000;
         }
+        .btn-turbo:hover { background-color: #fde047; }
+
+        button:active { transform: scale(0.95); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
 
-    <h1>Gemini Plinko</h1>
+    <h1>Turbo Plinko</h1>
     <div class="game-container">
-        <canvas id="plinkoCanvas" width="800" height="750"></canvas>
+        <canvas id="plinkoCanvas" width="800" height="650"></canvas>
         
         <div class="controls">
             <div class="balance-box">
                 Balance: $<span id="balanceDisplay">1000.00</span>
             </div>
+            
             <div class="bet-controls">
-                <label for="betAmount">Bet:</label>
-                <input type="number" id="betAmount" value="10.00" min="1" step="1">
-                <button onclick="dropBall()">Drop Ball</button>
+                <div class="input-group">
+                    <label>Rows (4-35)</label>
+                    <input type="number" id="rowCount" value="16" min="4" max="35" onchange="initBoard()">
+                </div>
+                <div class="input-group">
+                    <label>Bet per ball</label>
+                    <input type="number" id="betAmount" value="1.00" min="0.1" step="0.5">
+                </div>
+                <div class="btn-group">
+                    <button class="btn-drop" onclick="dropBall(1)">Drop Ball</button>
+                    <button class="btn-turbo" onclick="dropBall(100)">Turbo (x100)</button>
+                </div>
             </div>
         </div>
     </div>
@@ -118,179 +155,170 @@
         const ctx = canvas.getContext('2d');
         const balanceDisplay = document.getElementById('balanceDisplay');
         const betInput = document.getElementById('betAmount');
+        const rowInput = document.getElementById('rowCount');
 
-        // Game Configuration
-        const ROWS = 20;
-        const ROW_HEIGHT = 30;
-        const COL_WIDTH = 34;
+        let ROWS = 16;
+        let ROW_HEIGHT, COL_WIDTH, PEG_RADIUS, BALL_RADIUS;
         const START_X = canvas.width / 2;
-        const START_Y = 40;
-        const ANIMATION_SPEED = 0.08;
+        const START_Y = 30;
+        const ANIMATION_SPEED = 0.07;
 
         let balance = 1000.00;
-        
-        // Plinko Multipliers for 21 slots (Index 0 to 20)
-        // High risk extremes, very low middle
-        const multipliers = [
-            1000, 250, 50, 15, 5, 2, 1.5, 1, 0.5, 0.2, 0.1, 
-            0.2, 0.5, 1, 1.5, 2, 5, 15, 50, 250, 1000
-        ];
-
-        // Generate Pegs
-        const pegs = [];
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c <= r; c++) {
-                const x = START_X + (c - r / 2) * COL_WIDTH;
-                const y = START_Y + r * ROW_HEIGHT;
-                pegs.push({x, y});
-            }
-        }
-
+        let pegs = [];
+        let multipliers = [];
         let balls = [];
 
         function updateUI() {
             balanceDisplay.innerText = balance.toFixed(2);
         }
 
-        function dropBall() {
-            const bet = parseFloat(betInput.value);
-            if (isNaN(bet) || bet <= 0) return alert('Invalid bet amount!');
-            if (balance < bet) return alert('Insufficient balance!');
+        function initBoard() {
+            ROWS = Math.min(Math.max(parseInt(rowInput.value) || 16, 4), 35);
+            rowInput.value = ROWS;
             
-            balance -= bet;
-            updateUI();
+            const maxHeight = canvas.height - 120;
+            const maxWidth = canvas.width - 60;
+            
+            const baseSize = Math.min(maxWidth / ROWS, maxHeight / ROWS);
+            COL_WIDTH = baseSize;
+            ROW_HEIGHT = baseSize;
+            
+            PEG_RADIUS = Math.max(1, baseSize * 0.1);
+            BALL_RADIUS = Math.max(2, baseSize * 0.3);
 
-            // Pre-calculate path (0 = left, 1 = right)
-            let path = [];
-            let currentPos = 0; 
-            for(let i = 0; i < ROWS; i++) {
-                // 50/50 chance for true binomial distribution
-                const dir = Math.random() < 0.5 ? 0 : 1; 
-                path.push(dir);
-                currentPos += dir;
+            pegs = [];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c <= r; c++) {
+                    pegs.push({
+                        x: START_X + (c - r / 2) * COL_WIDTH,
+                        y: START_Y + r * ROW_HEIGHT
+                    });
+                }
             }
 
-            balls.push({
-                path: path,
-                step: 0,
-                progress: 0,
-                bet: bet,
-                finalSlot: currentPos
-            });
+            multipliers = [];
+            for (let i = 0; i <= ROWS; i++) {
+                const dist = Math.abs(i - ROWS / 2) / (ROWS / 2);
+                let m = 0.2 + Math.pow(dist, 4) * (ROWS * 2.5); 
+                multipliers.push(m < 1 ? Math.round(m * 10) / 10 : Math.round(m * 2) / 2);
+            }
+        }
+
+        function dropBall(count) {
+            const bet = parseFloat(betInput.value);
+            const totalCost = bet * count;
+
+            if (balance < totalCost) {
+                alert("Insufficient funds for " + count + " balls!");
+                return;
+            }
+
+            balance -= totalCost;
+            updateUI();
+
+            for (let n = 0; n < count; n++) {
+                let path = [];
+                let currentPos = 0;
+                for (let i = 0; i < ROWS; i++) {
+                    const dir = Math.random() < 0.5 ? 0 : 1;
+                    path.push(dir);
+                    currentPos += dir;
+                }
+
+                balls.push({
+                    path,
+                    step: 0,
+                    progress: 0,
+                    bet,
+                    finalSlot: currentPos,
+                    // Offset start times slightly for Turbo so balls don't overlap perfectly
+                    delay: count > 1 ? Math.random() * 2 : 0 
+                });
+            }
         }
 
         function update() {
             for (let i = balls.length - 1; i >= 0; i--) {
                 let b = balls[i];
-                b.progress += ANIMATION_SPEED;
                 
+                // Handle staggered start for turbo
+                if (b.delay > 0) {
+                    b.delay -= 0.1;
+                    continue;
+                }
+
+                b.progress += ANIMATION_SPEED;
                 if (b.progress >= 1) {
                     b.progress = 0;
                     b.step++;
-                    
-                    // Ball reached the bottom
                     if (b.step >= ROWS) {
-                        const winAmount = b.bet * multipliers[b.finalSlot];
-                        balance += winAmount;
+                        balance += b.bet * multipliers[b.finalSlot];
                         updateUI();
-                        balls.splice(i, 1); // Remove ball
+                        balls.splice(i, 1);
                     }
                 }
             }
-        }
-
-        function getMultiplierColor(m) {
-            if (m >= 100) return '#ff2929'; // Red
-            if (m >= 10) return '#ff7b29';  // Orange
-            if (m >= 2) return '#ffb029';   // Yellow-Orange
-            if (m >= 1) return '#e6ff29';   // Yellow
-            return '#29ff5e';               // Green (Losses)
         }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // Draw Pegs
-            ctx.fillStyle = '#cbd5e1';
+            ctx.fillStyle = '#4b5563';
             pegs.forEach(p => {
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, PEG_RADIUS, 0, Math.PI * 2);
                 ctx.fill();
             });
 
-            // Draw Multipliers (Slots)
-            const bottomY = START_Y + ROWS * ROW_HEIGHT + 20;
-            ctx.font = "bold 11px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
+            // Draw Multipliers
+            const bottomY = START_Y + ROWS * ROW_HEIGHT + 25;
+            const fontSize = Math.max(8, 200 / ROWS);
+            ctx.font = `bold ${fontSize}px sans-serif`;
             
-            for(let i = 0; i <= ROWS; i++) {
+            multipliers.forEach((m, i) => {
                 const x = START_X + (i - ROWS / 2) * COL_WIDTH;
-                const m = multipliers[i];
-                
-                // Box
-                ctx.fillStyle = getMultiplierColor(m);
-                ctx.beginPath();
-                ctx.roundRect(x - 16, bottomY - 12, 32, 24, 4);
-                ctx.fill();
-                
-                // Text
-                ctx.fillStyle = '#000000';
-                ctx.fillText(m + 'x', x, bottomY);
-            }
+                ctx.fillStyle = m >= 1 ? '#ffb029' : '#29ff5e';
+                ctx.fillRect(x - (COL_WIDTH*0.4), bottomY - 10, COL_WIDTH*0.8, 20);
+                ctx.fillStyle = '#000';
+                ctx.textAlign = 'center';
+                ctx.fillText(m, x, bottomY + (fontSize/3));
+            });
 
             // Draw Balls
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = "rgba(0,0,0,0.5)";
             balls.forEach(b => {
+                if (b.delay > 0) return;
+                
                 let r = b.step;
                 let currentC = b.path.slice(0, r).reduce((a,c) => a + c, 0);
+                let nextC = currentC + b.path[r];
 
-                if (r < ROWS) {
-                    let nextC = currentC + b.path[r];
-                    let startX = START_X + (currentC - r/2) * COL_WIDTH;
-                    let startY = START_Y + r * ROW_HEIGHT;
-                    
-                    let endX = START_X + (nextC - (r+1)/2) * COL_WIDTH;
-                    let endY = START_Y + (r+1) * ROW_HEIGHT;
+                let startX = START_X + (currentC - r/2) * COL_WIDTH;
+                let startY = START_Y + r * ROW_HEIGHT;
+                let endX = START_X + (nextC - (r+1)/2) * COL_WIDTH;
+                let endY = START_Y + (r+1) * ROW_HEIGHT;
 
-                    // Interpolate position
-                    let x = startX + (endX - startX) * b.progress;
-                    let y = startY + (endY - startY) * b.progress;
+                let x = startX + (endX - startX) * b.progress;
+                let y = startY + (endY - startY) * b.progress;
+                y -= Math.sin(b.progress * Math.PI) * (ROW_HEIGHT * 0.4);
 
-                    // Add a parabolic bounce arc to the animation
-                    y -= Math.sin(b.progress * Math.PI) * 14;
-
-                    // Ball Shadow
-                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-                    ctx.beginPath();
-                    ctx.arc(x, y + 5, 6, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    // Ball Fill
-                    ctx.fillStyle = '#ff4655';
-                    ctx.beginPath();
-                    ctx.arc(x, y, 7, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Ball Highlight
-                    ctx.fillStyle = '#ff99a2';
-                    ctx.beginPath();
-                    ctx.arc(x - 2, y - 2, 2, 0, Math.PI * 2);
-                    ctx.fill();
-                }
+                ctx.fillStyle = '#ff4655';
+                ctx.beginPath();
+                ctx.arc(x, y, BALL_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
             });
+            ctx.shadowBlur = 0;
 
-            // Loop
             requestAnimationFrame(() => {
                 update();
                 draw();
             });
         }
 
-        // Initialize Game Loop
-        requestAnimationFrame(() => {
-            update();
-            draw();
-        });
+        initBoard();
+        draw();
     </script>
 </body>
 </html>
