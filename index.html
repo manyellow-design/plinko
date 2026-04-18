@@ -1,206 +1,296 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neon Plinko</title>
-    <script src="https://cloudflare.com"></script>
+    <title>20-Row Plinko</title>
     <style>
         body {
-            margin: 0;
-            padding: 0;
-            background-color: #0f0f1b;
-            color: #fff;
+            background-color: #0f1923;
+            color: #ffffff;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            overflow: hidden;
+            margin: 0;
+            padding: 20px;
         }
 
-        #ui-container {
-            margin-top: 20px;
-            text-align: center;
-            z-index: 10;
-        }
-
-        .stats {
-            font-size: 24px;
-            font-weight: bold;
-            color: #00f2ff;
-            text-shadow: 0 0 10px #00f2ff;
-            margin-bottom: 10px;
-        }
-
-        button {
-            padding: 10px 25px;
-            font-size: 16px;
-            background: transparent;
-            color: #ff00ff;
-            border: 2px solid #ff00ff;
-            cursor: pointer;
-            border-radius: 5px;
-            transition: all 0.3s;
+        h1 {
+            margin: 0 0 10px 0;
+            color: #ff4655;
             text-transform: uppercase;
-            font-weight: bold;
-            box-shadow: 0 0 10px #ff00ff;
+            letter-spacing: 2px;
         }
 
-        button:hover {
-            background: #ff00ff;
-            color: #000;
-            box-shadow: 0 0 20px #ff00ff;
+        .game-container {
+            background-color: #1a2733;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         canvas {
-            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
-            margin-top: 10px;
+            background-color: #0f1923;
+            border-radius: 8px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
         }
 
-        .instructions {
-            margin-top: 10px;
-            color: #888;
-            font-size: 14px;
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            width: 100%;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        .balance-box {
+            font-size: 24px;
+            font-weight: bold;
+            color: #29ff5e;
+        }
+
+        .bet-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input[type="number"] {
+            background: #0f1923;
+            border: 2px solid #334155;
+            color: white;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 16px;
+            width: 100px;
+            outline: none;
+        }
+
+        button {
+            background-color: #ff4655;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background-color: #ff5c6a;
+        }
+
+        button:active {
+            transform: scale(0.95);
         }
     </style>
 </head>
 <body>
 
-    <div id="ui-container">
-        <div class="stats">Score: <span id="score">100.00</span></div>
-        <button onclick="resetGame()">Reset Game</button>
-        <div class="instructions">Klicke oben in den Bereich, um einen Ball (Kosten: 1.00) zu werfen!</div>
+    <h1>Gemini Plinko</h1>
+    <div class="game-container">
+        <canvas id="plinkoCanvas" width="800" height="750"></canvas>
+        
+        <div class="controls">
+            <div class="balance-box">
+                Balance: $<span id="balanceDisplay">1000.00</span>
+            </div>
+            <div class="bet-controls">
+                <label for="betAmount">Bet:</label>
+                <input type="number" id="betAmount" value="10.00" min="1" step="1">
+                <button onclick="dropBall()">Drop Ball</button>
+            </div>
+        </div>
     </div>
 
     <script>
-        // --- KONFIGURATION ---
-        const WIDTH = 600;
-        const HEIGHT = 700;
-        const ROWS = 12;
-        const PIN_RADIUS = 5;
-        const BALL_RADIUS = 12;
-        const MULTIPLIERS = [10, 5, 2, 0.5, 0.2, 0.5, 2, 5, 10];
+        const canvas = document.getElementById('plinkoCanvas');
+        const ctx = canvas.getContext('2d');
+        const balanceDisplay = document.getElementById('balanceDisplay');
+        const betInput = document.getElementById('betAmount');
+
+        // Game Configuration
+        const ROWS = 20;
+        const ROW_HEIGHT = 30;
+        const COL_WIDTH = 34;
+        const START_X = canvas.width / 2;
+        const START_Y = 40;
+        const ANIMATION_SPEED = 0.08;
+
+        let balance = 1000.00;
         
-        let score = 100.00;
-        const scoreElement = document.getElementById('score');
+        // Plinko Multipliers for 21 slots (Index 0 to 20)
+        // High risk extremes, very low middle
+        const multipliers = [
+            1000, 250, 50, 15, 5, 2, 1.5, 1, 0.5, 0.2, 0.1, 
+            0.2, 0.5, 1, 1.5, 2, 5, 15, 50, 250, 1000
+        ];
 
-        // --- MATTER.JS SETUP ---
-        const { Engine, Render, Runner, Bodies, Composite, Events } = Matter;
-        const engine = Engine.create();
-        const world = engine.world;
-
-        const render = Render.create({
-            element: document.body,
-            engine: engine,
-            options: {
-                width: WIDTH,
-                height: HEIGHT,
-                wireframes: false,
-                background: 'transparent'
-            }
-        });
-
-        Render.run(render);
-        const runner = Runner.create();
-        Runner.run(runner, engine);
-
-        // --- PINS ERSTELLEN (Dreiecks-Gitter) ---
-        for (let r = 2; r < ROWS; r++) {
-            const rowWidth = r * 40;
-            const startX = (WIDTH - rowWidth) / 2;
-            for (let i = 0; i <= r; i++) {
-                const x = startX + i * 40;
-                const y = 100 + r * 45;
-                const pin = Bodies.circle(x, y, PIN_RADIUS, {
-                    isStatic: true,
-                    render: { fillStyle: '#ffffff', strokeStyle: '#00f2ff', lineWidth: 2 }
-                });
-                Composite.add(world, pin);
+        // Generate Pegs
+        const pegs = [];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c <= r; c++) {
+                const x = START_X + (c - r / 2) * COL_WIDTH;
+                const y = START_Y + r * ROW_HEIGHT;
+                pegs.push({x, y});
             }
         }
 
-        // --- GEWINNZONEN (Multiplikatoren) ---
-        const slotWidth = WIDTH / MULTIPLIERS.length;
-        const slots = [];
-        MULTIPLIERS.forEach((m, i) => {
-            const x = i * slotWidth + slotWidth / 2;
-            const sensor = Bodies.rectangle(x, HEIGHT - 20, slotWidth - 10, 40, {
-                isStatic: true,
-                isSensor: true, // Erkennt Kollision ohne physischen Stoß
-                label: 'slot_' + m,
-                render: { 
-                    fillStyle: 'transparent',
-                    strokeStyle: m >= 1 ? '#00ff00' : '#ff4400',
-                    lineWidth: 1
-                }
-            });
-            Composite.add(world, sensor);
-            slots.push(sensor);
-        });
+        let balls = [];
 
-        // --- INTERAKTION: BALL EINWERFEN ---
-        window.addEventListener('mousedown', (e) => {
-            if (e.clientY > 150 && score >= 1) {
-                dropBall(e.clientX - render.canvas.getBoundingClientRect().left);
-            }
-        });
+        function updateUI() {
+            balanceDisplay.innerText = balance.toFixed(2);
+        }
 
-        function dropBall(x) {
-            // Begrenzung des Einwurfs auf Spielfeldbreite
-            const clampedX = Math.max(100, Math.min(WIDTH - 100, x));
+        function dropBall() {
+            const bet = parseFloat(betInput.value);
+            if (isNaN(bet) || bet <= 0) return alert('Invalid bet amount!');
+            if (balance < bet) return alert('Insufficient balance!');
             
-            score -= 1.00;
-            updateScore();
+            balance -= bet;
+            updateUI();
 
-            const ball = Bodies.circle(clampedX, 50, BALL_RADIUS, {
-                restitution: 0.6, // Bounciness
-                friction: 0.05,
-                render: { 
-                    fillStyle: '#ff00ff',
-                    shadowBlur: 15,
-                    shadowColor: '#ff00ff'
-                }
+            // Pre-calculate path (0 = left, 1 = right)
+            let path = [];
+            let currentPos = 0; 
+            for(let i = 0; i < ROWS; i++) {
+                // 50/50 chance for true binomial distribution
+                const dir = Math.random() < 0.5 ? 0 : 1; 
+                path.push(dir);
+                currentPos += dir;
+            }
+
+            balls.push({
+                path: path,
+                step: 0,
+                progress: 0,
+                bet: bet,
+                finalSlot: currentPos
             });
-            Composite.add(world, ball);
-
-            // Ball nach Landung entfernen
-            setTimeout(() => {
-                if (ball) Composite.remove(world, ball);
-            }, 8000);
         }
 
-        // --- KOLLISIONS-LOGIK ---
-        Events.on(engine, 'collisionStart', (event) => {
-            event.pairs.forEach(pair => {
-                const labels = [pair.bodyA.label, pair.bodyB.label];
-                const slotLabel = labels.find(l => l.startsWith('slot_'));
+        function update() {
+            for (let i = balls.length - 1; i >= 0; i--) {
+                let b = balls[i];
+                b.progress += ANIMATION_SPEED;
                 
-                if (slotLabel) {
-                    const multiplier = parseFloat(slotLabel.split('_')[1]);
-                    const ball = pair.bodyA.label.startsWith('slot_') ? pair.bodyB : pair.bodyA;
+                if (b.progress >= 1) {
+                    b.progress = 0;
+                    b.step++;
                     
-                    if (ball.circleRadius === BALL_RADIUS) { // Sicherstellen, dass es ein Ball ist
-                        score += multiplier;
-                        updateScore();
-                        Composite.remove(world, ball);
+                    // Ball reached the bottom
+                    if (b.step >= ROWS) {
+                        const winAmount = b.bet * multipliers[b.finalSlot];
+                        balance += winAmount;
+                        updateUI();
+                        balls.splice(i, 1); // Remove ball
                     }
                 }
+            }
+        }
+
+        function getMultiplierColor(m) {
+            if (m >= 100) return '#ff2929'; // Red
+            if (m >= 10) return '#ff7b29';  // Orange
+            if (m >= 2) return '#ffb029';   // Yellow-Orange
+            if (m >= 1) return '#e6ff29';   // Yellow
+            return '#29ff5e';               // Green (Losses)
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Pegs
+            ctx.fillStyle = '#cbd5e1';
+            pegs.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.fill();
             });
+
+            // Draw Multipliers (Slots)
+            const bottomY = START_Y + ROWS * ROW_HEIGHT + 20;
+            ctx.font = "bold 11px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            for(let i = 0; i <= ROWS; i++) {
+                const x = START_X + (i - ROWS / 2) * COL_WIDTH;
+                const m = multipliers[i];
+                
+                // Box
+                ctx.fillStyle = getMultiplierColor(m);
+                ctx.beginPath();
+                ctx.roundRect(x - 16, bottomY - 12, 32, 24, 4);
+                ctx.fill();
+                
+                // Text
+                ctx.fillStyle = '#000000';
+                ctx.fillText(m + 'x', x, bottomY);
+            }
+
+            // Draw Balls
+            balls.forEach(b => {
+                let r = b.step;
+                let currentC = b.path.slice(0, r).reduce((a,c) => a + c, 0);
+
+                if (r < ROWS) {
+                    let nextC = currentC + b.path[r];
+                    let startX = START_X + (currentC - r/2) * COL_WIDTH;
+                    let startY = START_Y + r * ROW_HEIGHT;
+                    
+                    let endX = START_X + (nextC - (r+1)/2) * COL_WIDTH;
+                    let endY = START_Y + (r+1) * ROW_HEIGHT;
+
+                    // Interpolate position
+                    let x = startX + (endX - startX) * b.progress;
+                    let y = startY + (endY - startY) * b.progress;
+
+                    // Add a parabolic bounce arc to the animation
+                    y -= Math.sin(b.progress * Math.PI) * 14;
+
+                    // Ball Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(x, y + 5, 6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Ball Fill
+                    ctx.fillStyle = '#ff4655';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Ball Highlight
+                    ctx.fillStyle = '#ff99a2';
+                    ctx.beginPath();
+                    ctx.arc(x - 2, y - 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+
+            // Loop
+            requestAnimationFrame(() => {
+                update();
+                draw();
+            });
+        }
+
+        // Initialize Game Loop
+        requestAnimationFrame(() => {
+            update();
+            draw();
         });
-
-        function updateScore() {
-            scoreElement.innerText = score.toFixed(2);
-        }
-
-        function resetGame() {
-            score = 100.00;
-            updateScore();
-            // Entferne alle aktiven Bälle
-            const allBodies = Composite.allBodies(world);
-            allBodies.forEach(body => {
-                if (!body.isStatic) Composite.remove(world, body);
-            });
-        }
     </script>
 </body>
 </html>
