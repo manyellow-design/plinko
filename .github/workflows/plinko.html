@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Plinko</title>
+    <script src="https://cloudflare.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f0f1b;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        #ui-container {
+            margin-top: 20px;
+            text-align: center;
+            z-index: 10;
+        }
+
+        .stats {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00f2ff;
+            text-shadow: 0 0 10px #00f2ff;
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 10px 25px;
+            font-size: 16px;
+            background: transparent;
+            color: #ff00ff;
+            border: 2px solid #ff00ff;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            font-weight: bold;
+            box-shadow: 0 0 10px #ff00ff;
+        }
+
+        button:hover {
+            background: #ff00ff;
+            color: #000;
+            box-shadow: 0 0 20px #ff00ff;
+        }
+
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            margin-top: 10px;
+        }
+
+        .instructions {
+            margin-top: 10px;
+            color: #888;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <div class="stats">Score: <span id="score">100.00</span></div>
+        <button onclick="resetGame()">Reset Game</button>
+        <div class="instructions">Klicke oben in den Bereich, um einen Ball (Kosten: 1.00) zu werfen!</div>
+    </div>
+
+    <script>
+        // --- KONFIGURATION ---
+        const WIDTH = 600;
+        const HEIGHT = 700;
+        const ROWS = 12;
+        const PIN_RADIUS = 5;
+        const BALL_RADIUS = 12;
+        const MULTIPLIERS = [10, 5, 2, 0.5, 0.2, 0.5, 2, 5, 10];
+        
+        let score = 100.00;
+        const scoreElement = document.getElementById('score');
+
+        // --- MATTER.JS SETUP ---
+        const { Engine, Render, Runner, Bodies, Composite, Events } = Matter;
+        const engine = Engine.create();
+        const world = engine.world;
+
+        const render = Render.create({
+            element: document.body,
+            engine: engine,
+            options: {
+                width: WIDTH,
+                height: HEIGHT,
+                wireframes: false,
+                background: 'transparent'
+            }
+        });
+
+        Render.run(render);
+        const runner = Runner.create();
+        Runner.run(runner, engine);
+
+        // --- PINS ERSTELLEN (Dreiecks-Gitter) ---
+        for (let r = 2; r < ROWS; r++) {
+            const rowWidth = r * 40;
+            const startX = (WIDTH - rowWidth) / 2;
+            for (let i = 0; i <= r; i++) {
+                const x = startX + i * 40;
+                const y = 100 + r * 45;
+                const pin = Bodies.circle(x, y, PIN_RADIUS, {
+                    isStatic: true,
+                    render: { fillStyle: '#ffffff', strokeStyle: '#00f2ff', lineWidth: 2 }
+                });
+                Composite.add(world, pin);
+            }
+        }
+
+        // --- GEWINNZONEN (Multiplikatoren) ---
+        const slotWidth = WIDTH / MULTIPLIERS.length;
+        const slots = [];
+        MULTIPLIERS.forEach((m, i) => {
+            const x = i * slotWidth + slotWidth / 2;
+            const sensor = Bodies.rectangle(x, HEIGHT - 20, slotWidth - 10, 40, {
+                isStatic: true,
+                isSensor: true, // Erkennt Kollision ohne physischen Stoß
+                label: 'slot_' + m,
+                render: { 
+                    fillStyle: 'transparent',
+                    strokeStyle: m >= 1 ? '#00ff00' : '#ff4400',
+                    lineWidth: 1
+                }
+            });
+            Composite.add(world, sensor);
+            slots.push(sensor);
+        });
+
+        // --- INTERAKTION: BALL EINWERFEN ---
+        window.addEventListener('mousedown', (e) => {
+            if (e.clientY > 150 && score >= 1) {
+                dropBall(e.clientX - render.canvas.getBoundingClientRect().left);
+            }
+        });
+
+        function dropBall(x) {
+            // Begrenzung des Einwurfs auf Spielfeldbreite
+            const clampedX = Math.max(100, Math.min(WIDTH - 100, x));
+            
+            score -= 1.00;
+            updateScore();
+
+            const ball = Bodies.circle(clampedX, 50, BALL_RADIUS, {
+                restitution: 0.6, // Bounciness
+                friction: 0.05,
+                render: { 
+                    fillStyle: '#ff00ff',
+                    shadowBlur: 15,
+                    shadowColor: '#ff00ff'
+                }
+            });
+            Composite.add(world, ball);
+
+            // Ball nach Landung entfernen
+            setTimeout(() => {
+                if (ball) Composite.remove(world, ball);
+            }, 8000);
+        }
+
+        // --- KOLLISIONS-LOGIK ---
+        Events.on(engine, 'collisionStart', (event) => {
+            event.pairs.forEach(pair => {
+                const labels = [pair.bodyA.label, pair.bodyB.label];
+                const slotLabel = labels.find(l => l.startsWith('slot_'));
+                
+                if (slotLabel) {
+                    const multiplier = parseFloat(slotLabel.split('_')[1]);
+                    const ball = pair.bodyA.label.startsWith('slot_') ? pair.bodyB : pair.bodyA;
+                    
+                    if (ball.circleRadius === BALL_RADIUS) { // Sicherstellen, dass es ein Ball ist
+                        score += multiplier;
+                        updateScore();
+                        Composite.remove(world, ball);
+                    }
+                }
+            });
+        });
+
+        function updateScore() {
+            scoreElement.innerText = score.toFixed(2);
+        }
+
+        function resetGame() {
+            score = 100.00;
+            updateScore();
+            // Entferne alle aktiven Bälle
+            const allBodies = Composite.allBodies(world);
+            allBodies.forEach(body => {
+                if (!body.isStatic) Composite.remove(world, body);
+            });
+        }
+    </script>
+</body>
+</html>
